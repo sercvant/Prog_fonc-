@@ -1,111 +1,127 @@
 #load "graphics.cma";;
 open Graphics;;
+
 open_graph "400x400";;
 set_window_title "Demineur";;
 
-(* Fonction pour afficher le menu *)
-let menu () =
-  clear_graph ();
+(* Dimensions de la grille *)
+let grid_rows = 10
+let grid_cols = 10
+let cell_size = 36
 
-  
-  
-  (* Affichage du bouton "Jouer seul" *)
-  set_color black;
-  moveto 50 100;
-  draw_rect 50 100 120 30;
-  moveto 60 115;
-  draw_string "Jouer seul";
-
-  (* Affichage du bouton "Jouer à deux" *)
-  set_color black;
-  moveto 50 150;
-  draw_rect 50 150 120 30;
-  moveto 60 165;
-  draw_string "Jouer à deux";
-
-  (* Affichage du bouton "Options" *)
-  set_color black;
-  moveto 50 200;
-  draw_rect 50 200 120 30;
-  moveto 60 215;
-  draw_string "Options";;
-
-(* Fonction pour tester les événements du menu *)
-let rec test_menu () =
-  let valeur = wait_next_event [Button_up; Key_pressed] in
-  if valeur.keypressed && valeur.key = '\027' then exit 0 (* ESC pour quitter *)
-  else test_menu ();;
-
-let grid_rows = 10;;
-let grid_cols = 10;;
-let cell_size = 36;;
-type cell_state = Hidden | Revealed
+(* Type pour l'état de chaque cellule : cachée, révélée ou contenant une mine *)
+type cell_state = Hidden | Revealed of int | Mine
 
 (* Créer une matrice représentant l'état de chaque cellule de la grille *)
 let grid = Array.make_matrix grid_rows grid_cols Hidden
 
-  let draw_grid () =
-    for i = 0 to grid_rows - 1 do
-      for j = 0 to grid_cols - 1 do
-        (* Dessiner chaque cellule *)
-        set_color black;
+(* Nombre de mines à placer dans la grille *)
+let num_mines = 10
+
+(* Fonction récursive pour placer des mines de manière aléatoire *)
+let rec place_mines n =
+  if n > 0 then
+    let x = Random.int grid_cols in
+    let y = Random.int grid_rows in
+    if grid.(y).(x) != Mine then (
+      grid.(y).(x) <- Mine;
+      place_mines (n - 1)  (* Placer les mines restantes *)
+    ) else
+      place_mines n  (* Réessayer si une mine est déjà présente *)
+  else ()
+
+(* Fonction récursive pour compter le nombre de mines autour d'une cellule donnée *)
+let rec count_adjacent_mines row col i j count =
+  if i > 1 then count
+  else
+    let r = row + i in
+    let c = col + j in
+    let new_count =
+      if r >= 0 && r < grid_rows && c >= 0 && c < grid_cols then
+        match grid.(r).(c) with
+        | Mine -> count + 1
+        | _ -> count
+      else count
+    in
+    if j < 1 then count_adjacent_mines row col i (j + 1) new_count
+    else count_adjacent_mines row col (i + 1) (-1) new_count
+
+(* Fonction pour dessiner la grille de manière récursive *)
+let rec draw_grid_row i =
+  if i < grid_rows then (
+    let rec draw_grid_col j =
+      if j < grid_cols then (
         let x = j * cell_size in
         let y = i * cell_size in
-        draw_rect x y cell_size cell_size;
-        (* Si la cellule est révélée, on la remplit *)
-      if grid.(i).(j) = Revealed then (
-        set_color red;
-        fill_rect x y cell_size cell_size;
         set_color black;
-        moveto (x + 10) (y + 15);
-        draw_string "X"  (* Remplacez par une action spécifique si nécessaire *)
+        draw_rect x y cell_size cell_size;
+        (* Si la cellule est révélée, on affiche le nombre de mines autour *)
+        (match grid.(i).(j) with
+        | Revealed mines ->
+          set_color blue;
+          fill_rect x y cell_size cell_size;
+          set_color black;
+          moveto (x + 10) (y + 15);
+          draw_string (string_of_int mines)
+        | _ -> ());
+        draw_grid_col (j + 1)
       )
-    done;
-  done
+    in
+    draw_grid_col 0;
+    draw_grid_row (i + 1)
+  )
 
-  (* Fonction pour déterminer si un clic est dans une cellule *)
-let is_inside_cell x y cell_x cell_y cell_size =
-  x >= cell_x && x <= (cell_x + cell_size) &&
-  y >= cell_y && y <= (cell_y + cell_size)
+let draw_grid () = draw_grid_row 0
 
+(* Fonction pour gérer un clic sur une cellule *)
+let rec handle_click1 x y =
+  let col = x / cell_size in
+  let row = y / cell_size in
+  if row < grid_rows && col < grid_cols then (
+    match grid.(row).(col) with
+    | Hidden ->
+      let mines_around = count_adjacent_mines row col (-1) (-1) 0 in
+      grid.(row).(col) <- Revealed mines_around;
+      Printf.printf "Cellule révélée : (%d, %d), Mines autour : %d\n" col row mines_around;
+      draw_grid ()
+    | Mine ->
+      set_color red;
+      let x = col * cell_size in
+      let y = row * cell_size in
+      fill_rect x y cell_size cell_size;
+      set_color black;
+      moveto (x + 10) (y + 15);
+      draw_string "M";
+      Printf.printf "Mine cliquée à : (%d, %d). Vous avez perdu !\n" col row;
+      clear_graph ();
+      moveto 150 200;
+      draw_string "Game Over!";
+      exit 0
+    | Revealed _ -> ()
+  )
 
-(* Appel du menu et des événements *)
-(* Vérifier si un clic est dans la zone d'un bouton *)
-let is_inside_button x y button_x button_y button_width button_height =
+(* Fonction récursive pour vérifier si un clic est dans un bouton du menu *)
+let rec is_inside_button x y button_x button_y button_width button_height =
   x >= button_x && x <= (button_x + button_width) &&
   y >= button_y && y <= (button_y + button_height)
 
-  let handle_click1 x y =
-    (* Convertir les coordonnées du clic en coordonnées de la grille *)
-    let col = x / cell_size in
-    let row = y / cell_size in
-    if row < grid_rows && col < grid_cols then (
-      (* Révéler la cellule si elle est encore cachée *)
-      if grid.(row).(col) = Hidden then (
-        grid.(row).(col) <- Revealed;
-        Printf.printf "Cellule révélée : (%d, %d)\n" col row;
-        draw_grid ()  (* Redessiner la grille après modification *)
-      )
-    )
-(* Gérer les clics sur les boutons individuels *)
-let handle_click x y =
+(* Fonction pour gérer les clics dans le menu *)
+let rec handle_click x y =
   if is_inside_button x y 50 100 120 30 then
-    (* Si le bouton "Jouer seul" est cliqué *)
     (clear_graph ();
     moveto 50 200;
-    draw_grid())
+    place_mines num_mines;  (* Placer les mines aléatoirement *)
+    draw_grid ())
   else if is_inside_button x y 50 150 120 30 then
-    (* Si le bouton "Jouer à deux" est cliqué *)
     (clear_graph ();
     moveto 50 200;
     draw_string "Mode deux joueurs démarré !")
   else if is_inside_button x y 50 200 120 30 then
-    (* Si le bouton "Options" est cliqué *)
     (clear_graph ();
     moveto 50 200;
     draw_string "Options sélectionnées")
 
-(* Boucle pour attendre et gérer les clics *)
+(* Fonction récursive pour gérer l'attente des clics *)
 let rec wait_for_click () =
   let event = wait_next_event [Button_down] in
   let x = event.mouse_x in
@@ -113,6 +129,20 @@ let rec wait_for_click () =
   handle_click x y;
   handle_click1 x y;
   wait_for_click ()
+
+(* Afficher le menu principal de manière récursive *)
+let rec draw_menu_button text y_offset =
+  moveto 50 y_offset;
+  draw_rect 50 y_offset 120 30;
+  moveto 60 (y_offset + 15);
+  draw_string text
+
+let rec menu () =
+  clear_graph ();
+  set_color black;
+  draw_menu_button "Jouer seul" 100;
+  draw_menu_button "Jouer à deux" 150;
+  draw_menu_button "Options" 200
 
 (* Appel du menu et des événements *)
 let () =
